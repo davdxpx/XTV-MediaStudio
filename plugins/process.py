@@ -593,11 +593,11 @@ class TaskProcessor:
         if self.message.photo:
             ext = ".jpg"
 
-        season_str = f"S{self.season:02d}" if self.season else ""
+        season_str = f"S{self.season:02d}" if self.season is not None else ""
         if isinstance(self.episode, list):
             episode_str = "".join([f"E{int(e):02d}" for e in self.episode])
         else:
-            episode_str = f"E{self.episode:02d}" if self.episode else ""
+            episode_str = f"E{self.episode:02d}" if self.episode is not None else ""
         season_episode = f"{season_str}{episode_str}"
         year_str = str(self.year) if self.year else ""
 
