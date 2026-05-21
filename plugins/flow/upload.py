@@ -785,10 +785,12 @@ async def handle_file_upload(client, message):
     elif re.search(r"480p", file_name, re.IGNORECASE):
         quality = "480p"
 
-    episode = 1
-    season = 1
+    episode = None
+    season = None
     session_data = get_data(user_id)
     if session_data.get("type") == "series":
+        episode = 1
+        season = 1
         match = re.search(r"[sS](\d{1,2})[eE](\d{1,2}(?:[eE]\d{1,2})*)", file_name)
         if match:
             season = int(match.group(1))

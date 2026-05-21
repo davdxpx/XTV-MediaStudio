@@ -196,7 +196,7 @@ def _debounce_callback(user_id: int, callback_id: str) -> bool:
 def format_episode_str(episode):
     if isinstance(episode, list):
         return "".join([f"E{int(e):02d}" for e in episode])
-    elif episode:
+    elif episode is not None:
         return f"E{int(episode):02d}"
     return ""
 

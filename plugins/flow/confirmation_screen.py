@@ -170,9 +170,14 @@ async def handle_auto_detection(client, message):
     is_subtitle = metadata["is_subtitle"]
 
     quality = metadata["quality"]
-    episode = metadata.get("episode", 1) or 1
-    season = metadata.get("season", 1) or 1
     media_lang = metadata.get("language", "en")
+
+    is_series = tmdb_data and tmdb_data.get("type") == "series"
+    episode = metadata.get("episode")
+    season = metadata.get("season")
+    if is_series:
+        episode = episode or 1
+        season = season or 1
 
     default_dumb_channel = await db.get_default_dumb_channel(user_id)
     if tmdb_data and tmdb_data.get("type") == "movie":

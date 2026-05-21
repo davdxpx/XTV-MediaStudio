@@ -91,10 +91,13 @@ SOURCE = PatternGroup(
         (rf"\bBluRay\b", "BluRay"),
         (rf"\bBlu{_SEP}Ray\b", "BluRay"),
         (rf"\bBlueRay\b", "BluRay"),
+        (rf"\bBDR\b", "BluRay"),
+        (rf"\bBR\b", "BluRay"),
         (rf"\bBDRip\b", "BDRip"),
         (rf"\bBD{_SEP}Rip\b", "BDRip"),
         (rf"\bBRRip\b", "BRRip"),
         (rf"\bBR{_SEP}Rip\b", "BRRip"),
+        (rf"\bWEB{_SEP}?Cap\b", "WEBCap"),
         # DVD / DVDRip
         (rf"\bDVDRip\b", "DVDRip"),
         (rf"\bDVD{_SEP}Rip\b", "DVDRip"),
@@ -150,6 +153,8 @@ HDR = PatternGroup(
         (rf"\bHLG\b", "HLG"),
         (rf"\bPQ\b", "PQ"),
         (rf"\bHDR\b", "HDR"),
+        (rf"\b10bit\b", "10bit"),
+        (rf"\b12bit\b", "12bit"),
         (rf"\bSDR\b", "SDR"),
     ],
 )
@@ -161,8 +166,13 @@ HDR = PatternGroup(
 # --------------------------------------------------------------------------
 AUDIO = PatternGroup(
     name="audio",
-    multi=False,
+    multi=True,
     patterns=[
+        # Multi-audio tags (higher priority in the group)
+        (rf"\bDual{_SEP}Audio\b", "Dual Audio"),
+        (rf"\bMulti{_SEP}Audio\b", "Multi Audio"),
+        (rf"\bDUAL\b", "DUAL"),
+        (rf"\bMULTI\b", "Multi"),
         # Atmos combos (need to beat plain Atmos / TrueHD / DD+)
         (rf"\bTrueHD{_SEP}Atmos\b", "TrueHD Atmos"),
         (rf"\bDD\+{_SEP}Atmos\b", "DD+ Atmos"),
@@ -270,10 +280,6 @@ EXTRAS = PatternGroup(
     name="extras",
     multi=True,
     patterns=[
-        (rf"\bDual{_SEP}Audio\b", "Dual Audio"),
-        (rf"\bMulti{_SEP}Audio\b", "Multi Audio"),
-        (rf"\bDUAL\b", "DUAL"),
-        (rf"\bMULTI\b", "Multi"),
         (rf"\bDubbed\b", "Dubbed"),
         (rf"\bMicDub\b", "MicDub"),
         (rf"\bLineDub\b", "LineDub"),
@@ -281,6 +287,7 @@ EXTRAS = PatternGroup(
         (rf"\bHardSubs?\b", "HardSubs"),
         (rf"\bSoftSubs?\b", "SoftSubs"),
         (rf"\bHardCoded\b", "HardCoded"),
+        (rf"\bHC\b", "HardCoded"),
         (rf"\bEnglish{_SEP}Subs?\b", "EngSubs"),
         (rf"\bMultiSubs?\b", "MultiSubs"),
         # Bare "DL" (Dual-Language / download tag). Previously required
