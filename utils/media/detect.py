@@ -221,7 +221,11 @@ def analyze_filename(filename):
         if isinstance(quality_from_patterns, str) and quality_from_patterns:
             quality = quality_from_patterns
         codec_label = detected_groups.get("codec")
-        audio_label = detected_groups.get("audio")
+        audio_val = detected_groups.get("audio")
+        if isinstance(audio_val, list):
+            audio_label = " | ".join(audio_val)
+        else:
+            audio_label = audio_val or ""
 
         season_val = guess.get("season")
         episode_val = guess.get("episode")
