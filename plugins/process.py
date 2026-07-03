@@ -36,6 +36,7 @@ from utils.template import (
     allowed_fields_for,
     apply_trim,
     safe_format,
+    shorten_filename,
 )
 from utils.tmdb import tmdb
 from utils.XTVengine import XTVEngine
@@ -749,8 +750,19 @@ class TaskProcessor:
                     else f"{safe_title}.{season_episode}.{self.language}"
                 )
                 base_name = clean_filename(base_name, fallback_template)
+                base_name = shorten_filename(base_name, ext)
             else:
                 base_name = clean_filename(base_name, template)
+                # Keep the full name (incl. extension) under 64 chars:
+                # abbreviate verbose tags (Dolby.Vision → DV), then drop
+                # low-priority placeholders, then hard-truncate.
+                base_name = shorten_filename(
+                    base_name,
+                    ext,
+                    template=template,
+                    fmt=scope_fmt,
+                    cleaner=lambda n: clean_filename(n, template),
+                )
 
             logger.info(
                 f"[rename] user={self.user_id} mode=series sub={self.is_subtitle} "
@@ -807,8 +819,16 @@ class TaskProcessor:
                     else f"{safe_title}.{year_str}.{self.language}"
                 )
                 base_name = clean_filename(base_name, fallback_template)
+                base_name = shorten_filename(base_name, ext)
             else:
                 base_name = clean_filename(base_name, template)
+                base_name = shorten_filename(
+                    base_name,
+                    ext,
+                    template=template,
+                    fmt=scope_fmt,
+                    cleaner=lambda n: clean_filename(n, template),
+                )
 
             logger.info(
                 f"[rename] user={self.user_id} mode={self.media_type} sub={self.is_subtitle} "

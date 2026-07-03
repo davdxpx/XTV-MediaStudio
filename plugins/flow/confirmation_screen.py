@@ -44,7 +44,7 @@ from utils.queue_manager import queue_manager
 from utils.state import clear_session, get_data, get_state, set_state, update_data
 from utils.tasks import spawn as _spawn_task
 from utils.telegram.log import get_logger
-from utils.template import safe_format
+from utils.template import safe_format, shorten_filename
 from utils.tmdb import tmdb
 
 logger = get_logger("plugins.flow.confirmation_screen")
@@ -120,7 +120,15 @@ def _filename_preview(fs: dict, sd: dict | None, template: str, channel: str) ->
         "filename": (fs.get("original_name") or "").rsplit(".", 1)[0],
     }
     result, err = safe_format(template, fmt)
-    return result if not err else template
+    if err:
+        return template
+    # Mirror the real pipeline: abbreviate verbose tags and keep the name
+    # (incl. extension) under the 64-char soft limit so the preview shows
+    # what will actually be produced.
+    orig = fs.get("original_name") or ""
+    ext = f".{orig.rsplit('.', 1)[1]}" if "." in orig else ""
+    result = shorten_filename(result, ext, template=template, fmt=fmt)
+    return f"{result}{ext}" if ext else result
 
 
 async def handle_auto_detection(client, message):
@@ -547,6 +555,12 @@ async def handle_confirm(client, callback_query):
         full_data = sd.copy()
         full_data.update(fs)
 
+    # Keep the Batch Actions hub in sync — drop this file from it and
+    # remove the hub entirely once the batch is empty.
+    from plugins.flow.batch_actions import note_file_closed
+    with contextlib.suppress(Exception):
+        await note_file_closed(client, user_id, msg_id)
+
     await process_file(client, callback_query.message, full_data)
 
 
@@ -704,6 +718,10 @@ async def handle_file_cancel(client, callback_query):
             file_size = getattr(media, "file_size", 0) if media else 0
             if file_size > 0:
                 await db.release_quota(callback_query.from_user.id, file_size)
+
+        from plugins.flow.batch_actions import note_file_closed
+        with contextlib.suppress(Exception):
+            await note_file_closed(client, callback_query.from_user.id, msg_id)
 
     await callback_query.message.delete()
 

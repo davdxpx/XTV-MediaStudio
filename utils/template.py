@@ -531,3 +531,79 @@ def apply_trim(mapping: Dict[str, str], scope: str) -> Dict[str, str]:
     """Apply :func:`truncate_for_scope` across a full mapping. Used by
     ``TaskProcessor._build_fmt_dict`` right before format time."""
     return {k: truncate_for_scope(v, scope, k) for k, v in mapping.items()}
+
+
+# ---------------------------------------------------------------------------
+# Output filename length control
+# ---------------------------------------------------------------------------
+# Telegram truncates long document names in chat lists and several player
+# apps choke on very long names, so output filenames should stay under 64
+# characters including the extension whenever possible.
+
+FILENAME_SOFT_LIMIT = 64
+
+# When a rendered filename exceeds the limit, placeholders are blanked in
+# this order (least important first) and the template re-rendered until the
+# name fits. Title / Season+Episode / Quality / Year / Channel are never
+# dropped automatically — they carry the identity of the file.
+_LENGTH_DROP_ORDER: Tuple[str, ...] = (
+    "Extras",
+    "Release",
+    "Edition",
+    "Audio",
+    "Codec",
+    "Specials",
+    "Source",
+    "HDR",
+)
+
+
+def shorten_filename(
+    base_name: str,
+    ext: str = "",
+    *,
+    template: Optional[str] = None,
+    fmt: Optional[Dict[str, Any]] = None,
+    cleaner=None,
+    limit: int = FILENAME_SOFT_LIMIT,
+) -> str:
+    """Keep ``base_name + ext`` at or under ``limit`` characters.
+
+    Steps, stopping as soon as the name fits:
+      1. Apply scene abbreviations ("Dolby.Vision" → "DV", …).
+      2. If ``template``/``fmt`` are given, blank low-priority placeholders
+         in ``_LENGTH_DROP_ORDER`` and re-render (running ``cleaner`` on
+         each candidate so separator collapsing matches the main pipeline).
+      3. Hard-truncate as a last resort, preserving the extension.
+
+    Returns the (possibly shortened) base name WITHOUT the extension.
+    """
+    # Local import: utils.media.patterns has no dependencies of its own,
+    # but importing it lazily keeps this module import-light for callers
+    # that only need validate_template/safe_format.
+    from utils.media.patterns import abbreviate_filename
+
+    name = abbreviate_filename(base_name)
+    if len(name) + len(ext) <= limit:
+        return name
+
+    if template and fmt:
+        reduced = dict(fmt)
+        for key in _LENGTH_DROP_ORDER:
+            if not reduced.get(key):
+                continue
+            reduced[key] = ""
+            rendered, err = safe_format(template, reduced)
+            if err:
+                break
+            candidate = cleaner(rendered) if cleaner else rendered
+            candidate = abbreviate_filename(candidate)
+            if candidate:
+                name = candidate
+            if len(name) + len(ext) <= limit:
+                return name
+
+    if len(name) + len(ext) > limit:
+        keep = max(8, limit - len(ext))
+        name = name[:keep].rstrip("._- ")
+    return name

@@ -33,6 +33,7 @@ were needed in the rest of the codebase.
 # dicts, so we always import it alongside the rest.
 from plugins.flow import (
     archive,  # noqa: F401
+    batch_actions,  # noqa: F401
     confirmation_screen,  # noqa: F401
     destinations,  # noqa: F401
     pickers,  # noqa: F401

@@ -436,6 +436,80 @@ def detect_all(filename: str) -> dict[str, list[str] | str | None]:
     return result
 
 
+# --------------------------------------------------------------------------
+# Filename abbreviations + length control helpers.
+# --------------------------------------------------------------------------
+
+# Verbose labels → short forms used in OUTPUT FILENAMES only (display
+# surfaces keep the full label). Applied separator-aware so
+# "Dolby.Vision", "Dolby Vision", "Dolby_Vision" and "Dolby-Vision" all
+# collapse to "DV". Longest entries first so compound labels win.
+FILENAME_ABBREVIATIONS: list[tuple[str, str]] = [
+    ("Criterion Collection", "Criterion"),
+    ("Collector's Edition", "CE"),
+    ("Collectors Edition", "CE"),
+    ("Anniversary Edition", "Anniversary"),
+    ("Extended Edition", "Extended"),
+    ("Ultimate Edition", "Ultimate"),
+    ("Special Edition", "SE"),
+    ("Director's Cut", "DC"),
+    ("Directors Cut", "DC"),
+    ("Theatrical Cut", "Theatrical"),
+    ("Extended Cut", "Extended"),
+    ("Dolby Vision", "DV"),
+    ("Dual Audio", "DUAL"),
+    ("Multi Audio", "MULTI"),
+]
+
+# One separator between label words: dot, space, underscore, dash or
+# apostrophe (the latter for "Director'S" renders that kept the quote).
+_ABBR_SEP = r"[\.\s_\-']"
+
+# `\b` treats `_` as a word character, so "A_Dolby_Vision_B" would slip
+# through a \b-anchored pattern. Use explicit alphanumeric boundaries.
+_COMPILED_ABBREVIATIONS: list[tuple[re.Pattern[str], str]] = [
+    (
+        re.compile(
+            r"(?<![A-Za-z0-9])"
+            + _ABBR_SEP.join(re.escape(w) for w in long.split(" "))
+            + r"(?![A-Za-z0-9])",
+            re.IGNORECASE,
+        ),
+        short,
+    )
+    for long, short in FILENAME_ABBREVIATIONS
+]
+
+
+def abbreviate_filename(name: str) -> str:
+    """Collapse verbose tags in a rendered filename to their short scene
+    forms ("Dolby.Vision" → "DV"). Safe on arbitrary strings — patterns
+    are full multi-word labels, so title words never match."""
+    if not name:
+        return name
+    for rx, short in _COMPILED_ABBREVIATIONS:
+        name = rx.sub(short, name)
+    return name
+
+
+# Leading episode numbers: "51. The Immortal Legion.mkv", "07 - Title.mkv",
+# "7) Pilot.mkv". Requires a separator AND a following space so scene
+# names like "300.Rise.of.an.Empire.2014" (dot, no space) never match.
+# 1-3 digits only, so "1917. Documentary" (a year) is excluded.
+_LEADING_EPISODE_RE = re.compile(r"^\s*(\d{1,3})(?:[\.\)]|\s?-)\s+\S")
+
+
+def leading_episode_number(filename: str) -> int | None:
+    """Return the episode number when a filename starts with a bare
+    episode index ("51. The Immortal Legion.mkv" → 51), else None."""
+    if not filename:
+        return None
+    m = _LEADING_EPISODE_RE.match(filename)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
 def flatten_specials(groups: dict[str, list[str] | str | None]) -> list[str]:
     """Collapse detected groups into a flat `specials` list.
 
