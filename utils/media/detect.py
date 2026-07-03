@@ -6,7 +6,7 @@ import re
 
 from guessit import guessit
 
-from utils.media.patterns import detect_all, flatten_specials
+from utils.media.patterns import detect_all, flatten_specials, leading_episode_number
 from utils.telegram.log import get_logger
 from utils.tmdb import tmdb
 
@@ -237,6 +237,16 @@ def analyze_filename(filename):
 
         if isinstance(season_val, list) and len(season_val) > 0:
             season_val = season_val[0]
+
+        # Leading bare episode index: "51. The Immortal Legion.mkv" is
+        # episode 51 (absolute numbering, common for anime / long-running
+        # shows). Only applied when nothing else produced season/episode,
+        # so explicit SxxExx / 1x02 style names always win.
+        if season_val is None and episode_val is None:
+            lead_ep = leading_episode_number(filename)
+            if lead_ep is not None:
+                episode_val = lead_ep
+                media_type = "series"
 
         return {
             "title": guess.get("title"),

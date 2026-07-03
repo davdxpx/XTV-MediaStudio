@@ -73,10 +73,11 @@ async def run_consolidate_nonpublic_settings(db: Any) -> int:
         return 0
 
     try:
-        # The SettingsCollectionShim wraps the underlying collections.
-        # `.find({"_id": {"$regex": ...}})` is supported and returns a
-        # cursor over the virtual ids we care about.
-        cursor = db.settings.find({"_id": {"$regex": r"^user_\d+$"}})
+        # Enumerate the RAW settings collection, not the shim. The shim's
+        # `.find()` happens to pass through today, but being explicit keeps
+        # this migration honest: it only ever consumes stale `user_<id>`
+        # documents that physically live in MediaStudio-Settings.
+        cursor = db.settings.real.find({"_id": {"$regex": r"^user_\d+$"}})
     except Exception as e:
         logger.warning(f"Could not enumerate user_* docs: {e}")
         return 0
@@ -123,11 +124,20 @@ async def run_consolidate_nonpublic_settings(db: Any) -> int:
 
     # Remove consumed per-user docs so they don't resurface if callers
     # somehow bypass `_get_doc_id`.
+    #
+    # CRITICAL: delete via the RAW collection. Routing this delete through
+    # the shim rewrote `{"_id": "user_<uid>"}` into an `$unset` of
+    # `MediaStudio-users.<uid>.personal_settings` — i.e. it wiped the
+    # user's LIVE settings (dumb channels, thumbnails, templates,
+    # setup_completed) while leaving the stale trigger doc in
+    # MediaStudio-Settings untouched. Because this migration runs on every
+    # boot, that combination erased the bot's configuration on every
+    # restart and forced the setup wizard to rerun.
     removed = 0
     for doc in user_docs:
         doc_id = doc.get("_id")
         try:
-            await db.settings.delete_one({"_id": doc_id})
+            await db.settings.real.delete_one({"_id": doc_id})
             removed += 1
         except Exception as e:
             logger.warning(f"Could not remove {doc_id}: {e}")
