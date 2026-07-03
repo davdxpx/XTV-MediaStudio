@@ -47,6 +47,7 @@ from utils.auth import check_force_sub
 from utils.auth.gate import check_and_send_welcome, send_force_sub_gate
 from utils.media.archive import is_archive
 from utils.media.detect import analyze_filename
+from utils.media.patterns import leading_episode_number
 from utils.queue_manager import queue_manager
 from utils.state import clear_session, get_data, get_state, set_state, update_data
 from utils.tasks import spawn as _spawn_task
@@ -94,6 +95,7 @@ async def process_batch(client, user_id):
         update_confirmation_message,
     )
 
+    created_msg_ids = []
     for item in sorted_batch:
         message = item["message"]
         data = item["data"]
@@ -102,11 +104,19 @@ async def process_batch(client, user_id):
         msg = await message.reply_text("Processing file...", quote=True)
         file_sessions[msg.id] = data
         _touch_file_session(msg.id)
+        created_msg_ids.append(msg.id)
 
         if is_auto:
             await update_auto_detected_message(client, msg.id, user_id)
         else:
             await update_confirmation_message(client, msg.id, user_id)
+
+    # With 2+ files, offer one temporary "Batch Actions" hub below the
+    # per-file messages so quality / season / specials / accept can be
+    # applied to the whole batch in a single tap.
+    if len(created_msg_ids) >= 2:
+        from plugins.flow.batch_actions import send_batch_actions_message
+        await send_batch_actions_message(client, user_id, created_msg_ids)
 
 
 @Client.on_message(
@@ -811,6 +821,11 @@ async def handle_file_upload(client, message):
                     if match:
                         season = int(match.group(1))
                         episode = int(match.group(2))
+                    else:
+                        # "51. The Immortal Legion.mkv" → episode 51
+                        lead_ep = leading_episode_number(file_name)
+                        if lead_ep is not None:
+                            episode = lead_ep
 
     lang = (
         session_data.get("language", "en") if session_data.get("is_subtitle") else None

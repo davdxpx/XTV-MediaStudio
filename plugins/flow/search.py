@@ -378,6 +378,11 @@ async def handle_text_input(client, message):
         await prompt_destination_folder(client, user_id, message, is_edit=False)
         raise StopPropagation
 
+    elif state == "awaiting_batch_season":
+        from plugins.flow.batch_actions import handle_batch_season_input
+        await handle_batch_season_input(client, message)
+        raise StopPropagation
+
     elif state.startswith("awaiting_episode_correction_"):
         from plugins.flow.confirmation_screen import update_confirmation_message
         msg_id = int(state.split("_")[-1])

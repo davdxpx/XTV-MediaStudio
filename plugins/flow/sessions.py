@@ -40,6 +40,12 @@ batch_sessions: dict = {}
 batch_tasks: dict = {}
 batch_status_msgs: dict = {}
 
+# Batch-Actions hub state: one entry per user while a "apply to all files"
+# menu is live. Shape: {"msg_ids": [confirm_msg_id, ...],
+# "menu_msg_id": int | None, "prev_state": str | None,
+# "spc_page": int, "aud_page": int, "cod_page": int, "dirty": bool}
+batch_action_sessions: dict = {}
+
 _processing_callbacks: dict = {}
 _expiry_warnings: dict = {}
 
@@ -79,6 +85,7 @@ def _on_session_expired(user_id):
     if task:
         task.cancel()
     batch_status_msgs.pop(user_id, None)
+    batch_action_sessions.pop(user_id, None)
 
 
 register_expire_callback(_on_session_expired)

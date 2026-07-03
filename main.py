@@ -179,6 +179,22 @@ if __name__ == "__main__":
     except Exception as e:
         logger.warning(f"consolidate_nonpublic_settings migration issue: {e}")
 
+    # --- Rescue legacy raw settings docs (one-time, advisory-locked) ---
+    # Drains data parked at raw `_id: "global_settings"` / "public_mode_config"
+    # / "user_<uid>" documents inside MediaStudio-Settings through the shim's
+    # routing (per-concern docs + CEO personal_settings) and removes the raw
+    # docs. Without this, that data was invisible to the virtual-doc reads
+    # and the bot appeared to lose thumbnails / dumb channels / templates on
+    # every redeploy. Takes a full settings backup before touching anything.
+    try:
+        from db import db
+        from db.migrations.rescue_legacy_settings import run_rescue_legacy_settings
+
+        logger.info("Running DB migration: rescue_legacy_settings ...")
+        app.loop.run_until_complete(run_rescue_legacy_settings(db))
+    except Exception as e:
+        logger.warning(f"rescue_legacy_settings migration issue: {e}")
+
     # --- Move per-user usage into MediaStudio-usage collection ---
     # See db/migrations/usage_collection_v1.py. Creates indexes, backfills
     # per-day + alltime + daily-global docs from legacy user.usage subdocs,
