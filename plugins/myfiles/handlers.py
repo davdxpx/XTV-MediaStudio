@@ -187,7 +187,90 @@ async def myfiles_command(client: Client, message: Message):
     text, markup = await get_myfiles_main_menu(user_id)
     await message.reply_text(text, reply_markup=markup)
 
-@Client.on_callback_query(filters.regex(r"^(myfiles_|mf_mov_|mf_df_|mf_pg_|mf_st|mf_ms|mf_sea_|mf_sa|settings_cat_|stg_)"))
+
+_FOLDERS_PER_PAGE = 12
+
+
+async def _render_folder_category(client, callback_query, user_id, f_type, page=0):
+    """Paginated folder list for a category (movies/series/music/custom).
+
+    The old implementation put EVERY folder on the keyboard — a library
+    with a few hundred movies blew past Telegram's reply-markup size
+    limit (REPLY_MARKUP_TOO_LONG) and the Movies/Series buttons looked
+    dead. It also ran one count query per folder; this version resolves
+    all counts for the page in a single aggregation.
+    """
+    folder_query = {"user_id": user_id, "type": f_type} if Config.PUBLIC_MODE else {"type": f_type}
+    total_folders = await db.folders.count_documents(folder_query)
+    total_pages = max(1, (total_folders + _FOLDERS_PER_PAGE - 1) // _FOLDERS_PER_PAGE)
+    page = max(0, min(page, total_pages - 1))
+
+    cursor = (
+        db.folders.find(folder_query)
+        .sort("name", 1)
+        .skip(page * _FOLDERS_PER_PAGE)
+        .limit(_FOLDERS_PER_PAGE)
+    )
+    folders = await cursor.to_list(length=_FOLDERS_PER_PAGE)
+
+    # File counts for this page's folders in ONE query. Count scope
+    # follows the mode: shared library in private mode, per-user in
+    # public mode (the old per-user count under-reported in private).
+    counts: dict = {}
+    if folders:
+        count_match: dict = {"folder_id": {"$in": [f["_id"] for f in folders]}}
+        if Config.PUBLIC_MODE:
+            count_match["user_id"] = user_id
+        with contextlib.suppress(Exception):
+            async for row in db.files.aggregate(
+                [
+                    {"$match": count_match},
+                    {"$group": {"_id": "$folder_id", "n": {"$sum": 1}}},
+                ]
+            ):
+                counts[row["_id"]] = row["n"]
+
+    page_str = f" · Page {page + 1}/{total_pages}" if total_pages > 1 else ""
+    body = (
+        f"**{total_folders}** folder(s){page_str}"
+        if folders
+        else "No folders found yet."
+    )
+    text = (
+        f"📁 **{f_type.capitalize()} Folders**\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{body}\n"
+        "━━━━━━━━━━━━━━━━━━━━"
+    )
+
+    buttons = []
+    if f_type == "custom":
+        buttons.append([InlineKeyboardButton("➕ Create New Folder", callback_data="myfiles_create_folder")])
+
+    for folder in folders:
+        n = counts.get(folder["_id"], 0)
+        name = folder.get("name") or "Folder"
+        if len(name) > 32:
+            name = name[:29] + "..."
+        buttons.append(
+            [InlineKeyboardButton(f"📁 {name} ({n})", callback_data=f"myfiles_folder_{str(folder['_id'])}")]
+        )
+
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"mf_fpg_{f_type}_{page - 1}"))
+        nav.append(InlineKeyboardButton(f"{page + 1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"mf_fpg_{f_type}_{page + 1}"))
+        buttons.append(nav)
+
+    buttons.append([InlineKeyboardButton("← Back to MyFiles", callback_data="myfiles_main")])
+
+    await safe_edit_or_send(client, callback_query, text, InlineKeyboardMarkup(buttons))
+
+
+@Client.on_callback_query(filters.regex(r"^(myfiles_|mf_fpg_|mf_mov_|mf_df_|mf_pg_|mf_st|mf_ms|mf_sea_|mf_sa|settings_cat_|stg_)"))
 async def myfiles_callback(client: Client, callback_query: CallbackQuery):
     data = callback_query.data
     user_id = callback_query.from_user.id
@@ -436,7 +519,7 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
         return
 
     # Only update last_menu if it's a structural navigation callback
-    if data in ["myfiles_main", "myfiles_cat_recent", "myfiles_cat_movies", "myfiles_cat_series", "myfiles_cat_custom"] or data.startswith("myfiles_folder_") or data.startswith("myfiles_page_"):
+    if data in ["myfiles_main", "myfiles_cat_recent", "myfiles_cat_movies", "myfiles_cat_series", "myfiles_cat_custom"] or data.startswith(("myfiles_folder_", "myfiles_page_", "mf_fpg_")):
         state_dict = await get_myfiles_state(user_id)
         state_dict["last_menu"] = data
         await set_myfiles_state(user_id, state_dict)
@@ -909,29 +992,19 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
         await safe_edit_or_send(client, callback_query, text, InlineKeyboardMarkup(buttons))
         return
 
+    # (folder-category rendering lives in _render_folder_category below)
+
     if data in ["myfiles_cat_movies", "myfiles_cat_series", "myfiles_cat_music", "myfiles_cat_custom"]:
         f_type = data.split("_")[-1]
+        await _render_folder_category(client, callback_query, user_id, f_type, page=0)
+        return
 
-        folder_query = {"user_id": user_id, "type": f_type} if Config.PUBLIC_MODE else {"type": f_type}
-        cursor = db.folders.find(folder_query).sort("name", 1)
-        folders = await cursor.to_list(length=None)
-
-        text = f"📁 **{f_type.capitalize()} Folders**"
-        buttons = []
-
-        if f_type == "custom":
-            buttons.append([InlineKeyboardButton("➕ Create New Folder", callback_data="myfiles_create_folder")])
-
-        if not folders:
-            text += "\n\nNo folders found."
-        else:
-            for folder in folders:
-                count = await db.files.count_documents({"user_id": user_id, "folder_id": folder["_id"]})
-                buttons.append([InlineKeyboardButton(f"📁 {folder['name']} ({count})", callback_data=f"myfiles_folder_{str(folder['_id'])}")])
-
-        buttons.append([InlineKeyboardButton("← Back to MyFiles", callback_data="myfiles_main")])
-
-        await safe_edit_or_send(client, callback_query, text, InlineKeyboardMarkup(buttons))
+    if data.startswith("mf_fpg_"):
+        # Folder-category pagination: mf_fpg_<type>_<page>
+        parts = data.replace("mf_fpg_", "").rsplit("_", 1)
+        f_type = parts[0]
+        f_page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+        await _render_folder_category(client, callback_query, user_id, f_type, page=f_page)
         return
 
     if data.startswith("myfiles_folder_"):
