@@ -70,7 +70,9 @@ from config import Config
 from plugins.help.mirror_leech_guides import get_guide
 from tools.mirror_leech import ContextStore
 from tools.mirror_leech.Controller import (
+    MAX_BATCH_URLS,
     UnsupportedSourceError,
+    extract_urls,
     pick_downloader,
 )
 from tools.mirror_leech.UIChrome import frame_plain as frame
@@ -261,18 +263,86 @@ async def ml_command(client: Client, message: Message) -> None:
 
     parts = (message.text or "").split(None, 1)
     if len(parts) < 2 or not parts[1].strip():
-        await message.reply_text(
-            "Usage: `/ml <url>`\n\n"
-            "Supported: direct HTTP(S), YouTube / social video (yt-dlp),\n"
-            "Telegram file refs, and RSS feeds.",
+        # No source → the Mirror-Leech hub. Much friendlier than a bare
+        # usage string: quick access to queue / history / settings and a
+        # setup assistant for first-time users.
+        from plugins.mirror_leech_extras import render_hub
+        await render_hub(client, message)
+        return
+
+    raw = parts[1].strip()
+
+    # Multi-URL paste: `/ml url1 url2 …` (or one per line) fans out one
+    # task per link after a single destination pick.
+    urls = extract_urls(raw)
+    if len(urls) > 1:
+        supported: list[str] = []
+        rejected = 0
+        for u in urls:
+            try:
+                await pick_downloader(u)
+                supported.append(u)
+            except UnsupportedSourceError:
+                rejected += 1
+        if not supported:
+            await message.reply_text(
+                "None of the pasted links are supported. Supported: direct "
+                "HTTP(S), yt-dlp pages, Telegram refs, RSS feeds."
+            )
+            return
+        cid = ContextStore.put(
+            ContextStore.PickerContext(
+                user_id=message.from_user.id,
+                source=supported[0],
+                candidate_downloader=None,
+                origin_chat_id=message.chat.id,
+                origin_msg_id=message.id,
+                url_sources=supported,
+            )
+        )
+        note = f"\n> ⚠️ {rejected} unsupported link(s) skipped." if rejected else ""
+        prompt = await message.reply_text(
+            frame(
+                "⏳ **Mirror-Leech — Batch Preparing**",
+                f"> 🔗 **{len(supported)}** link(s) detected (max {MAX_BATCH_URLS})."
+                f"{note}\n"
+                f"> Building destination picker…",
+            ),
+            reply_markup=_cancel_kb(),
+        )
+        await _render_uploader_picker(
+            client, message.chat.id, prompt.id, cid, message.from_user.id
         )
         return
 
-    source = parts[1].strip()
+    source = urls[0] if urls else raw
     try:
         dl_cls = await pick_downloader(source)
     except UnsupportedSourceError as exc:
         await message.reply_text(str(exc))
+        return
+
+    # Duplicate guard: the same source already queued or transferring for
+    # this user is almost always a double-tap, not intent.
+    from tools.mirror_leech.Tasks import ml_worker_pool
+    dupe = next(
+        (
+            t
+            for t in ml_worker_pool.list_for_user(message.from_user.id)
+            if t.source == source
+            and t.status in ("queued", "downloading", "uploading")
+        ),
+        None,
+    )
+    if dupe:
+        await message.reply_text(
+            frame(
+                "⚠️ **Mirror-Leech — Already Running**",
+                f"> Task `{dupe.id}` is already transferring this exact "
+                f"link (status: `{dupe.status}`).\n"
+                "> Check `/mlqueue` — or wait for it to finish.",
+            )
+        )
         return
 
     # Stash picker state so the uploader-pick keyboard can reference it via
@@ -421,6 +491,70 @@ async def ml_start_task(client: Client, callback_query: CallbackQuery) -> None:
                 message_id=callback_query.message.id,
                 text=frame(
                     "☁️ **Mirror-Leech — Batch Queued**",
+                    "\n".join(summary_lines),
+                ),
+            )
+        return
+
+    # Multi-URL fan-out (`/ml url1 url2 …`): one task per link, all with
+    # the same destination selection. Runner auto-resolves the downloader
+    # per URL (downloader_id left empty).
+    if len(ctx.url_sources) > 1:
+        summary_lines = [
+            f"> 🔗 Queued **{len(ctx.url_sources)}** link(s) →",
+            "> 📤 " + ", ".join(f"`{u}`" for u in ctx.selected_uploaders),
+            "",
+        ]
+        first = True
+        for idx, url in enumerate(ctx.url_sources, start=1):
+            task = MLTask.new(
+                user_id=ctx.user_id,
+                source=url,
+                downloader_id="",
+                uploader_ids=list(ctx.selected_uploaders),
+            )
+            task.message_chat_id = callback_query.message.chat.id
+            if first:
+                task.message_id = callback_query.message.id
+                first = False
+            else:
+                fresh = await client.send_message(
+                    callback_query.message.chat.id,
+                    f"⏳ Queued task `{task.id}` ({idx}/{len(ctx.url_sources)})",
+                    reply_markup=InlineKeyboardMarkup(
+                        [[InlineKeyboardButton("⏹ Cancel", callback_data=f"ml_cancel_{task.id}")]]
+                    ),
+                )
+                task.message_id = fresh.id
+            summary_lines.append(f"• `{task.id}` — {url[:60]}")
+
+            async def _url_runner(t: MLTask) -> None:
+                try:
+                    await run_task(
+                        t,
+                        client,
+                        progress_cb=lambda current: update_progress_message(client, current),
+                    )
+                except Exception as exc:
+                    t.status = "failed"
+                    t.error = str(exc)
+                    await update_progress_message(client, t)
+                    raise
+                await update_progress_message(client, t)
+
+            try:
+                ml_worker_pool.enqueue(task, _url_runner)
+            except Exception as exc:
+                logger.exception("enqueue failed for URL batch task %s", task.id)
+                summary_lines.append(f"  ⚠️ `{task.id}` could not be started: {exc}")
+
+        ContextStore.drop(cid)
+        with contextlib.suppress(Exception):
+            await client.edit_message_text(
+                chat_id=callback_query.message.chat.id,
+                message_id=callback_query.message.id,
+                text=frame(
+                    "☁️ **Mirror-Leech — URL Batch Queued**",
                     "\n".join(summary_lines),
                 ),
             )

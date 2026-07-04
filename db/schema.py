@@ -26,6 +26,9 @@ MYFILES_SHARES_COLLECTION = "MediaStudio-myfiles-shares"
 # Survives restarts so a bot crash mid-transfer doesn't drop the user's
 # scheduled uploads.
 ML_QUEUE_COLLECTION = "MediaStudio-ml-queue"
+# Mirror-Leech — finished-task history (last runs per user, powers the
+# /ml History screen + one-tap Repeat). TTL-pruned after 30 days.
+ML_HISTORY_COLLECTION = "MediaStudio-ml-history"
 
 # Usage tracking (PR E).
 # ``MediaStudio-usage`` — one doc per (uid, date) with rich per-type /

@@ -29,6 +29,9 @@ class PickerContext:
     origin_chat_id: Optional[int] = None
     # When the entry was created as a batch over MyFiles selection:
     file_ids: list[str] = field(default_factory=list)
+    # When the entry was created from a multi-URL paste (`/ml url1 url2 …`):
+    # every URL in the batch. `source` holds the first one for display.
+    url_sources: list[str] = field(default_factory=list)
 
 
 def new_id() -> str:

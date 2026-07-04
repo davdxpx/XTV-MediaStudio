@@ -26,6 +26,27 @@ TaskStatus = Literal[
     "queued", "downloading", "uploading", "done", "failed", "cancelled"
 ]
 
+# Optional hook invoked (fire-and-forget) with the finished MLTask after it
+# reaches a terminal state. The UI layer injects History.record here so this
+# module stays framework- and DB-agnostic for unit tests.
+_task_finished_hook: Optional[Callable[["MLTask"], Any]] = None
+
+
+def set_task_finished_hook(fn: Optional[Callable[["MLTask"], Any]]) -> None:
+    global _task_finished_hook
+    _task_finished_hook = fn
+
+
+def _fire_finished_hook(task: "MLTask") -> None:
+    if _task_finished_hook is None:
+        return
+    try:
+        res = _task_finished_hook(task)
+        if hasattr(res, "__await__"):
+            asyncio.ensure_future(res)
+    except Exception:
+        logger.debug("task_finished_hook raised", exc_info=True)
+
 
 @dataclass
 class UploadResult:
@@ -232,6 +253,7 @@ class MLWorkerPool:
                     finally:
                         task.finished_at = time.time()
                         self._running.pop(task.id, None)
+                        _fire_finished_hook(task)
             except asyncio.CancelledError:
                 task.status = "cancelled"
                 task.finished_at = time.time()
@@ -247,6 +269,7 @@ class MLWorkerPool:
                 task.error = f"pipeline setup failed: {exc}"
                 task.finished_at = time.time()
                 self._running.pop(task.id, None)
+                _fire_finished_hook(task)
 
         at = asyncio.create_task(_wrapped())
 

@@ -41,6 +41,7 @@ class Database:
             self.myfiles_quotas = None
             self.myfiles_shares = None
             self.ml_queue = None
+            self.ml_history = None
         else:
             try:
                 self.client = AsyncIOMotorClient(
@@ -81,6 +82,9 @@ class Database:
             # Mirror-Leech persistent queue (scheduled + retry-backoff
             # bookkeeping). Indexes are created lazily by Queue.ensure_indexes().
             self.ml_queue = self.db[_schema.ML_QUEUE_COLLECTION]
+            # Mirror-Leech finished-task history (History screen + Repeat).
+            # Indexes are created lazily by History.ensure_indexes().
+            self.ml_history = self.db[_schema.ML_HISTORY_COLLECTION]
             # Usage tracking — rich per-day / lifetime / daily-global rollups
             # (PR E). Indexes are created by the usage_collection_v1 migration.
             self.usage = self.db[_schema.USAGE_COLLECTION]
