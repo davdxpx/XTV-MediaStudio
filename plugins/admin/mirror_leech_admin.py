@@ -75,8 +75,26 @@ def _render_text_ready(enabled: bool) -> str:
     )
 
 
-def _render_text_onboarding(enabled: bool, secrets_ok: bool) -> str:
-    kb = "✅ set" if secrets_ok else "❌ missing"
+# Precise SECRETS_KEY state lines — "missing" used to be shown for ALL
+# failure modes, sending admins hunting for an env var they had already
+# set when the real problem was a quoted/invalid key or a missing
+# `cryptography` package.
+_SECRETS_STATE_LINES = {
+    "ok": "✅ set",
+    "missing": "❌ missing — env var `SECRETS_KEY` is not set",
+    "invalid": (
+        "⚠️ set but INVALID — not a Fernet key.\n"
+        "  ↳ Regenerate below, or check for typos/quotes in the env value."
+    ),
+    "no-crypto": (
+        "⚠️ set, but the `cryptography` package is not installed.\n"
+        "  ↳ `pip install cryptography` on the host, then restart."
+    ),
+}
+
+
+def _render_text_onboarding(enabled: bool, secrets_state: str) -> str:
+    kb = _SECRETS_STATE_LINES.get(secrets_state, "❌ missing")
     toggle = "✅ enabled" if enabled else "❌ disabled"
     return (
         "☁️ **Mirror-Leech Config**\n"
@@ -130,11 +148,12 @@ def _render_keyboard(enabled: bool, secrets_ok: bool) -> InlineKeyboardMarkup:
 
 async def _render_root(callback_query: CallbackQuery) -> None:
     enabled = await _feature_enabled()
-    secrets_ok = Secrets.is_available()
+    secrets_state = Secrets.diagnose()
+    secrets_ok = secrets_state == "ok"
     text = (
         _render_text_ready(enabled)
         if secrets_ok and enabled
-        else _render_text_onboarding(enabled, secrets_ok)
+        else _render_text_onboarding(enabled, secrets_state)
     )
     with contextlib.suppress(MessageNotModified):
         await callback_query.message.edit_text(

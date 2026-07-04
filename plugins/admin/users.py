@@ -129,7 +129,9 @@ async def list_users(client, callback):
             status = "🚫" if u.get("banned") else ("💎" if u.get("is_premium") else "👤")
 
             label = f"{status} {name} {uname}".rstrip()
-            markup.append([InlineKeyboardButton(label, callback_data=f"view_user|{uid}")])
+            # Carry the originating list (mode + page) through the profile
+            # callbacks so "Back" returns to THIS page, not page 1.
+            markup.append([InlineKeyboardButton(label, callback_data=f"view_user|{uid}|{mode}|{page}")])
 
     nav = []
     if page > 0:
@@ -162,6 +164,17 @@ async def start_user_search(client, callback):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_users_menu")]])
         )
 
+def _parse_origin(callback_data: str) -> tuple[str, str]:
+    """Extract the originating list (mode, page) from a profile/action
+    callback. Every callback in this flow is `<verb>|<uid>[|<mode>|<page>]`,
+    so parts[2:4] is the origin regardless of the verb. Returns
+    ("", "") when the profile was opened without list context (search)."""
+    parts = callback_data.split("|")
+    if len(parts) >= 4 and parts[3].isdigit():
+        return parts[2], parts[3]
+    return "", ""
+
+
 @Client.on_callback_query(filters.regex(r"^view_user\|"))
 async def view_user_profile(client, callback):
     if not is_admin(callback.from_user.id):
@@ -172,6 +185,9 @@ async def view_user_profile(client, callback):
     except Exception:
         await callback.answer("Invalid User ID", show_alert=True)
         return
+
+    origin_mode, origin_page = _parse_origin(callback.data)
+    origin_suffix = f"|{origin_mode}|{origin_page}" if origin_mode else ""
 
     user = await db.get_user(target_id)
     if not user:
@@ -229,35 +245,45 @@ async def view_user_profile(client, callback):
 
     markup = []
 
+    # Every action carries the origin suffix so the post-action profile
+    # re-render (which reuses callback.data) keeps the list context.
     if banned:
-        markup.append([InlineKeyboardButton("🟢 Unban User", callback_data=f"act_unban|{target_id}")])
+        markup.append([InlineKeyboardButton("🟢 Unban User", callback_data=f"act_unban|{target_id}{origin_suffix}")])
     else:
-        markup.append([InlineKeyboardButton("🔴 Ban User", callback_data=f"act_ban|{target_id}")])
+        markup.append([InlineKeyboardButton("🔴 Ban User", callback_data=f"act_ban|{target_id}{origin_suffix}")])
 
     if Config.PUBLIC_MODE:
         if is_prem:
             markup.append([
-                InlineKeyboardButton("🔄 Extend Plan", callback_data=f"act_add_prem_ask|{target_id}"),
-                InlineKeyboardButton("❌ Remove Premium", callback_data=f"act_reset_prem|{target_id}")
+                InlineKeyboardButton("🔄 Extend Plan", callback_data=f"act_add_prem_ask|{target_id}{origin_suffix}"),
+                InlineKeyboardButton("❌ Remove Premium", callback_data=f"act_reset_prem|{target_id}{origin_suffix}")
             ])
         else:
             markup.append([
-                InlineKeyboardButton("➕ Add Standard", callback_data=f"act_add_prem_ask_standard|{target_id}"),
-                InlineKeyboardButton("➕ Add Deluxe", callback_data=f"act_add_prem_ask_deluxe|{target_id}")
+                InlineKeyboardButton("➕ Add Standard", callback_data=f"act_add_prem_ask_standard|{target_id}{origin_suffix}"),
+                InlineKeyboardButton("➕ Add Deluxe", callback_data=f"act_add_prem_ask_deluxe|{target_id}{origin_suffix}")
             ])
 
     markup.append([
-        InlineKeyboardButton("🗑️ Reset Today's Quota", callback_data=f"act_reset_quota|{target_id}")
+        InlineKeyboardButton("🗑️ Reset Today's Quota", callback_data=f"act_reset_quota|{target_id}{origin_suffix}")
     ])
 
     markup.append([
-        InlineKeyboardButton("🗑 Delete Data", callback_data=f"act_del_data_ask|{target_id}"),
-        InlineKeyboardButton("📄 Export JSON", callback_data=f"act_export_json|{target_id}")
+        InlineKeyboardButton("🗑 Delete Data", callback_data=f"act_del_data_ask|{target_id}{origin_suffix}"),
+        InlineKeyboardButton("📄 Export JSON", callback_data=f"act_export_json|{target_id}{origin_suffix}")
     ])
 
-    markup.append([
-        InlineKeyboardButton("← Back to User Management", callback_data="admin_users_menu")
-    ])
+    if origin_mode:
+        markup.append([
+            InlineKeyboardButton(
+                f"← Back to Page {int(origin_page) + 1}",
+                callback_data=f"list_users|{origin_mode}|{origin_page}",
+            )
+        ])
+    else:
+        markup.append([
+            InlineKeyboardButton("← Back to User Management", callback_data="admin_users_menu")
+        ])
 
     await callback.edit_message_text(text, reply_markup=InlineKeyboardMarkup(markup))
 
@@ -340,11 +366,15 @@ async def action_add_prem_ask(client, callback):
     else:
         plan = target_doc.get("premium_plan", "standard") or "standard"
 
+    origin_mode, origin_page = _parse_origin(callback.data)
+    origin_suffix = f"|{origin_mode}|{origin_page}" if origin_mode else ""
+
     admin_sessions[callback.from_user.id] = {
         "state": "wait_add_prem_days",
         "target_id": uid,
         "plan": plan,
         "msg_id": callback.message.id,
+        "origin_suffix": origin_suffix,
     }
 
     with contextlib.suppress(Exception):
@@ -352,7 +382,7 @@ async def action_add_prem_ask(client, callback):
             f"**➕ Add Premium ({plan.capitalize()}) for User {uid}**\n\n"
             "Enter the duration in **DAYS** (e.g. `30`).\n"
             "__Fractional values like `7.5` are accepted; negatives are rejected.__",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}{origin_suffix}")]])
         )
     with contextlib.suppress(Exception):
         await callback.answer()
@@ -360,9 +390,11 @@ async def action_add_prem_ask(client, callback):
 @Client.on_callback_query(filters.regex(r"^act_del_data_ask\|"))
 async def action_del_data_ask(client, callback):
     uid = int(callback.data.split("|")[1])
+    origin_mode, origin_page = _parse_origin(callback.data)
+    origin_suffix = f"|{origin_mode}|{origin_page}" if origin_mode else ""
     markup = InlineKeyboardMarkup([
         [InlineKeyboardButton("⚠️ CONFIRM DELETE", callback_data=f"act_del_data_exec|{uid}")],
-        [InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}")]
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}{origin_suffix}")]
     ])
     await callback.edit_message_text(
         f"**⚠️ DELETE USER DATA: {uid}**\n\n"
@@ -457,10 +489,11 @@ async def _handle_add_prem_days(client, message, state, state_obj, msg_id):
     user_id = message.from_user.id
     uid = state_obj.get("target_id")
     plan = state_obj.get("plan", "standard")
+    origin_suffix = state_obj.get("origin_suffix", "")
     raw = (message.text or "").strip().replace(",", ".")
 
     cancel_markup = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}")]]
+        [[InlineKeyboardButton("❌ Cancel", callback_data=f"view_user|{uid}{origin_suffix}")]]
     )
 
     try:
@@ -501,7 +534,7 @@ async def _handle_add_prem_days(client, message, state, state_obj, msg_id):
             client, message, msg_id,
             f"❌ Database error while granting premium: `{exc}`",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}")]]
+                [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}{origin_suffix}")]]
             ),
         )
         admin_sessions.pop(user_id, None)
@@ -513,7 +546,7 @@ async def _handle_add_prem_days(client, message, state, state_obj, msg_id):
             f"❌ User `{uid}` not found in DB. Ask them to /start the bot, "
             "then try again.",
             reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}")]]
+                [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}{origin_suffix}")]]
             ),
         )
         admin_sessions.pop(user_id, None)
@@ -528,7 +561,7 @@ async def _handle_add_prem_days(client, message, state, state_obj, msg_id):
         client, message, msg_id,
         f"✅ **Success!**\nUser `{uid}` has received `{days}` days of Premium ({plan}).",
         reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}")]]
+            [[InlineKeyboardButton("← Back to Profile", callback_data=f"view_user|{uid}{origin_suffix}")]]
         ),
     )
     admin_sessions.pop(user_id, None)
