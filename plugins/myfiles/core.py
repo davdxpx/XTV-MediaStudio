@@ -180,11 +180,13 @@ async def get_myfiles_main_menu(user_id: int):
 
         text = (
             "📁 **MyFiles**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             "__Your personal media vault. Permanent files stick around — temp files vanish after use.__\n\n"
             f"**Plan** · `{plan_label}`\n"
             f"**Permanent Storage** · `{perm_count} / {limit_str}` files\n"
             f"**Temporary Storage** · `{temp_count}` files\n\n"
-            "What are you looking for?"
+            "What are you looking for?\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
     else:
         perm_count = await db.files.count_documents({"status": "permanent"})
@@ -197,10 +199,12 @@ async def get_myfiles_main_menu(user_id: int):
 
         text = (
             "📁 **Team MyFiles**\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
             "__Global storage across all users.__\n\n"
             f"**Permanent Storage** · `{perm_count} / {limit_str}` files\n"
             f"**Temporary Storage** · `{temp_count}` files\n\n"
-            "Browse by category:"
+            "Browse by category:\n"
+            "━━━━━━━━━━━━━━━━━━━━"
         )
 
     has_movies = await db.folders.count_documents({"user_id": user_id, "type": "movies"} if Config.PUBLIC_MODE else {"type": "movies"}) > 0
@@ -272,7 +276,14 @@ async def get_myfiles_main_menu(user_id: int):
         from plugins.myfiles.extras import render_quota_header
         q = await render_quota_header(user_id)
         if q:
-            text = text.rstrip() + "\n\n" + q
+            divider = "━━━━━━━━━━━━━━━━━━━━"
+            stripped = text.rstrip()
+            if stripped.endswith(divider):
+                # Keep the quota line INSIDE the framed body.
+                base = stripped[: -len(divider)].rstrip()
+                text = f"{base}\n\n{q}\n━━━━━━━━━━━━━━━━━━━━"
+            else:
+                text = stripped + "\n\n" + q
     except Exception:
         pass
 

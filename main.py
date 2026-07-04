@@ -229,6 +229,12 @@ if __name__ == "__main__":
             tasks = []
 
             async def cache_link(link):
+                # Bots cannot resolve t.me/+… invite links (CheckChatInvite
+                # is user-only → BOT_METHOD_INVALID), so don't even try —
+                # the channel gets cached via its numeric id elsewhere.
+                if isinstance(link, str) and ("/+" in link or "joinchat" in link):
+                    logger.debug(f"[peer-cache] skipping invite link '{link}' (bots cannot resolve)")
+                    return
                 try:
                     await app.get_chat(link)
                 except Exception as e:
@@ -328,17 +334,28 @@ if __name__ == "__main__":
                     logger.debug(f"Flow cleanup: {e}")
 
         logger.info("Scheduling background tasks...")
-        spawn(db_cleanup(), label="db_cleanup")
-        spawn(state_cleanup(), label="state_cleanup")
 
-        # Mirror-Leech persistent-queue worker: drains scheduled uploads
-        # and retries transient failures with exponential backoff. Safe
-        # no-op when Mongo is offline — the worker just loops.
-        try:
-            from tools.mirror_leech.Worker import start as _start_ml_worker
-            _start_ml_worker(app)
-        except Exception as e:
-            logger.warning(f"Could not start Mirror-Leech worker: {e}")
+        # spawn() needs a RUNNING event loop (asyncio.create_task). At this
+        # point in main we're between run_until_complete() calls, so there
+        # is none — calling spawn() directly raised "no running event loop"
+        # and silently killed EVERY background job (DB cleanup, session
+        # cleanup, ML worker). Creating the tasks inside a short
+        # run_until_complete() attaches them to app.loop; they stay pending
+        # when it returns and resume as soon as idle() runs the loop.
+        async def _schedule_background_tasks():
+            spawn(db_cleanup(), label="db_cleanup")
+            spawn(state_cleanup(), label="state_cleanup")
+
+            # Mirror-Leech persistent-queue worker: drains scheduled uploads
+            # and retries transient failures with exponential backoff. Safe
+            # no-op when Mongo is offline — the worker just loops.
+            try:
+                from tools.mirror_leech.Worker import start as _start_ml_worker
+                _start_ml_worker(app)
+            except Exception as e:
+                logger.warning(f"Could not start Mirror-Leech worker: {e}")
+
+        app.loop.run_until_complete(_schedule_background_tasks())
 
     except Exception as e:
         logger.warning(f"Could not schedule background tasks: {e}")
@@ -365,7 +382,11 @@ if __name__ == "__main__":
                 logger.info(f"Recovered {count} stale flow sessions from DB.")
 
         logger.info("Checking for stale flow sessions...")
-        spawn(recover_stale_sessions(), label="recover_stale_sessions")
+
+        async def _spawn_recover():
+            spawn(recover_stale_sessions(), label="recover_stale_sessions")
+
+        app.loop.run_until_complete(_spawn_recover())
     except Exception as e:
         logger.warning(f"Error recovering stale sessions: {e}")
 
@@ -379,7 +400,11 @@ if __name__ == "__main__":
                 logger.info("Cleanup complete. No orphaned files found.")
 
         logger.info("Running automated orphaned file cleanup...")
-        spawn(async_cleanup_orphaned(), label="orphaned_file_cleanup")
+
+        async def _spawn_orphan_cleanup():
+            spawn(async_cleanup_orphaned(), label="orphaned_file_cleanup")
+
+        app.loop.run_until_complete(_spawn_orphan_cleanup())
     except Exception as e:
         logger.warning(f"Error during orphaned file cleanup: {e}")
 
