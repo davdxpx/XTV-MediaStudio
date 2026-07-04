@@ -362,6 +362,16 @@ async def build_files_list_keyboard(user_id: int, filter_query: dict, page: int,
         buttons.append([
             InlineKeyboardButton(f"🔗 Generate Share Link ({len(selected_files)})", callback_data="mf_ms_sha")
         ])
+        # MyFiles → Dumb Channel batch send. Only rendered when the user
+        # actually has channels configured.
+        with contextlib.suppress(Exception):
+            if await db.get_dumb_channels(user_id):
+                buttons.append([
+                    InlineKeyboardButton(
+                        f"📡 Send Selected to Channel ({len(selected_files)})",
+                        callback_data="mf_send_ch_multi",
+                    )
+                ])
         # Bulk ops row — vanishes when the toggle is off.
         try:
             from utils.auth.feature_gate import feature_enabled as _fe

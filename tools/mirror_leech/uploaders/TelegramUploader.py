@@ -55,6 +55,26 @@ class TelegramUploader(Uploader):
             str(local_path),
             caption=local_path.name,
         )
+
+        # Archive the result into MyFiles so mirrored files live in the
+        # library like every other output. Only possible for bot-client
+        # uploads — the bot can't copy messages the Pro userbot sent in
+        # a chat it isn't part of. Best-effort: failures never break the
+        # mirror task itself.
+        if uploader is client:
+            try:
+                from utils.myfiles.store import save_message_to_myfiles
+
+                await save_message_to_myfiles(
+                    client,
+                    ctx.user_id,
+                    sent,
+                    file_name=local_path.name,
+                    tool_name="mirror_leech",
+                )
+            except Exception as e:
+                logger.debug(f"MyFiles archive of mirrored file failed: {e}")
+
         link = None
         try:
             if getattr(sent.chat, "username", None):

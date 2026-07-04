@@ -27,6 +27,7 @@ from . import (
     extras,  # noqa: F401  (registers @Client handlers)
     handlers,  # noqa: F401  (registers @Client handlers)
     insights,  # noqa: F401  (registers @Client handlers)
+    send_channel,  # noqa: F401  (registers @Client handlers)
 )
 
 __all__ = [

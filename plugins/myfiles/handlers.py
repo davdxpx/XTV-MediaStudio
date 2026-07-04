@@ -1114,6 +1114,17 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
         buttons = [
             [InlineKeyboardButton("📤 Send File", callback_data=f"myfiles_send_{file_id}")],
             [share_btn],
+        ]
+
+        # MyFiles → Dumb Channel: post this stored file into any
+        # configured dumb channel (retroactive distribution).
+        with contextlib.suppress(Exception):
+            if await db.get_dumb_channels(user_id):
+                buttons.append(
+                    [InlineKeyboardButton("📡 Send to Channel", callback_data=f"mf_send_ch_{file_id}")]
+                )
+
+        buttons += [
             [InlineKeyboardButton(perm_btn_text, callback_data=f"myfiles_toggle_perm_{file_id}")],
             [InlineKeyboardButton("✏️ Rename", callback_data=f"myfiles_rename_{file_id}"),
              InlineKeyboardButton("📂 Move", callback_data=f"myfiles_move_{file_id}")],
