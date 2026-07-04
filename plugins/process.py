@@ -1688,6 +1688,11 @@ class TaskProcessor:
                     except Exception as e:
                         logger.warning(f"Error applying system filename template: {e}")
 
+                    try:
+                        stored_size = os.path.getsize(self.output_path) if self.output_path else 0
+                    except OSError:
+                        stored_size = 0
+
                     file_data = {
                         "user_id": self.user_id,
                         "file_name": internal_name,
@@ -1701,7 +1706,12 @@ class TaskProcessor:
                         "poster_url": self.poster_url,
                         "media_type": self.media_type,
                         "season": self.season,
-                        "episode": self.episode
+                        "episode": self.episode,
+                        # Size + quality power the MyFiles Insights
+                        # dashboard (storage totals, biggest files) and
+                        # richer file-detail screens.
+                        "file_size": stored_size,
+                        "quality": self.quality,
                     }
                     await db.files.insert_one(file_data)
             except Exception as e:

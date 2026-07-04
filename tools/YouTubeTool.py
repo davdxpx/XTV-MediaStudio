@@ -1456,7 +1456,7 @@ async def _run_video_download(client, status_msg, user_id: int, url: str, qualit
             f"Quality: `{quality}`"
         )
         try:
-            await client.send_video(
+            delivered_msg = await client.send_video(
                 chat_id=user_id,
                 video=filepath,
                 caption=caption,
@@ -1465,7 +1465,20 @@ async def _run_video_download(client, status_msg, user_id: int, url: str, qualit
             )
         except Exception as e:
             logger.warning(f"send_video failed, falling back to send_document: {e}")
-            await client.send_document(chat_id=user_id, document=filepath, caption=caption)
+            delivered_msg = await client.send_document(chat_id=user_id, document=filepath, caption=caption)
+
+        # Archive into MyFiles so YouTube downloads show up alongside
+        # renamed files. Best-effort — never blocks delivery.
+        with contextlib.suppress(Exception):
+            from utils.myfiles.store import save_message_to_myfiles
+            await save_message_to_myfiles(
+                client,
+                user_id,
+                delivered_msg,
+                file_name=os.path.basename(filepath) if filepath else None,
+                media_type="video",
+                tool_name="youtube",
+            )
 
         with contextlib.suppress(MessageNotModified):
             await status_msg.edit_text(
@@ -1565,7 +1578,7 @@ async def _run_audio_download(client, status_msg, user_id: int, url: str, bitrat
             f"Bitrate: `{bitrate} kbps`"
         )
         try:
-            await client.send_audio(
+            delivered_msg = await client.send_audio(
                 chat_id=user_id,
                 audio=filepath,
                 caption=caption,
@@ -1575,7 +1588,18 @@ async def _run_audio_download(client, status_msg, user_id: int, url: str, bitrat
             )
         except Exception as e:
             logger.warning(f"send_audio failed, falling back to send_document: {e}")
-            await client.send_document(chat_id=user_id, document=filepath, caption=caption)
+            delivered_msg = await client.send_document(chat_id=user_id, document=filepath, caption=caption)
+
+        with contextlib.suppress(Exception):
+            from utils.myfiles.store import save_message_to_myfiles
+            await save_message_to_myfiles(
+                client,
+                user_id,
+                delivered_msg,
+                file_name=os.path.basename(filepath) if filepath else None,
+                media_type="audio",
+                tool_name="youtube",
+            )
 
         with contextlib.suppress(MessageNotModified):
             await status_msg.edit_text(

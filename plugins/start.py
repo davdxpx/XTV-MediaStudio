@@ -465,6 +465,16 @@ async def render_start_menu(client, user_id, message_to_edit=None, first_name="U
     unselected_tools = [t for t in all_avail_ids if t not in selected_tools]
     if unselected_tools:
         buttons.append([InlineKeyboardButton("✨ Other Features", callback_data="other_features_menu")])
+
+    # MyFiles is the bot's library — surface it right on the start menu
+    # instead of hiding it behind /myfiles. Admins always see it.
+    try:
+        _mf_on = await db.get_setting("myfiles_enabled", default=False)
+        if _mf_on or user_id == Config.CEO_ID or user_id in Config.ADMIN_IDS:
+            buttons.append([InlineKeyboardButton("📂 MyFiles Library", callback_data="myfiles_main")])
+    except Exception:
+        pass
+
     if Config.PUBLIC_MODE and is_premium_user:
         buttons.append([InlineKeyboardButton("💎 Premium Dashboard", callback_data="user_premium_menu")])
     buttons.append([InlineKeyboardButton("📖 Help & Guide", callback_data="help_guide")])

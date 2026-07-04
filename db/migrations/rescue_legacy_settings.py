@@ -106,19 +106,50 @@ async def _mark_completed(settings_coll, *, stats: dict) -> None:
 async def _drain_doc_through_shim(
     db: Any, raw_doc: dict, virtual_id: str
 ) -> int:
-    """Send every field in ``raw_doc`` through the shim as a single $set
-    update targeting ``virtual_id``. The shim splits PERSONAL_KEYS,
-    USER_TOP_LEVEL_KEYS, per-concern docs and legacy_misc correctly.
+    """Send the fields of ``raw_doc`` through the shim targeting
+    ``virtual_id``. The shim splits PERSONAL_KEYS, USER_TOP_LEVEL_KEYS,
+    per-concern docs and legacy_misc correctly.
 
-    Returns the number of keys rescued.
+    LIVE DATA WINS. The legacy doc is by definition stale — it was
+    invisible to the running bot — so it must only ever FILL GAPS:
+
+      * key missing from the live view          → write it whole
+      * both live and legacy values are dicts   → write only the legacy
+        subkeys the live dict doesn't have (dotted paths, so e.g. a
+        stale ``templates`` dict can no longer clobber a freshly saved
+        ``templates.caption``)
+      * key exists live with a scalar           → skip the legacy value
+
+    Returns the number of top-level keys rescued (fully or partially).
     """
     payload = {k: v for k, v in raw_doc.items() if k != "_id"}
     if not payload:
         return 0
-    await db.settings.update_one(
-        {"_id": virtual_id}, {"$set": payload}, upsert=True
-    )
-    return len(payload)
+
+    current = await db.settings.find_one({"_id": virtual_id}) or {}
+
+    set_fields: dict = {}
+    rescued = 0
+    for key, value in payload.items():
+        live = current.get(key)
+        if key not in current:
+            set_fields[key] = value
+            rescued += 1
+        elif isinstance(live, dict) and isinstance(value, dict):
+            added = False
+            for sub_key, sub_val in value.items():
+                if sub_key not in live:
+                    set_fields[f"{key}.{sub_key}"] = sub_val
+                    added = True
+            if added:
+                rescued += 1
+        # else: live scalar wins — drop the stale legacy value.
+
+    if set_fields:
+        await db.settings.update_one(
+            {"_id": virtual_id}, {"$set": set_fields}, upsert=True
+        )
+    return rescued
 
 
 async def _rescue_virtual_doc(db: Any, doc_id: str) -> dict:
@@ -130,12 +161,16 @@ async def _rescue_virtual_doc(db: Any, doc_id: str) -> dict:
     if not raw:
         return {"found": False, "keys": 0}
 
-    rescued = await _drain_doc_through_shim(db, raw, doc_id)
-    # Now physically remove the raw doc. The shim's own writes won't
-    # recreate it — PERSONAL_KEYS go to MediaStudio-users and global keys
-    # go to their per-concern docs.
+    # Remove the raw doc BEFORE draining. The virtual-doc merge includes
+    # the raw ``global_settings`` doc as a fallback layer, so reading the
+    # live state while the raw doc still exists would show the stale
+    # values as "live" and the gap-filling merge would rescue nothing.
+    # The full-collection backup taken by the caller makes this safe —
+    # ``raw`` is held in memory for the drain below.
     with contextlib.suppress(Exception):
         await db.settings.real.delete_one({"_id": doc_id})
+
+    rescued = await _drain_doc_through_shim(db, raw, doc_id)
 
     logger.info(
         "rescue_legacy_settings: drained %s (%d keys) and removed the raw doc",

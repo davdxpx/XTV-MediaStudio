@@ -199,6 +199,12 @@ _MYFILES_SUBFEATURES: list[tuple[str, str, str]] = [
      "Folders inside folders with breadcrumb navigation."),
     ("myfiles_smart",    "🧠 Smart Collections",
      "Saved-query folders that stay in sync via the search DSL."),
+    ("myfiles_insights", "📈 Insights",
+     "Stats dashboard, expiring-soon rescue, pinned view, duplicate "
+     "cleanup + series completeness reports."),
+    ("myfiles_tools_bridge", "🛠 Tools Bridge",
+     "Open a stored file directly in any tool (re-rename, convert, "
+     "trim, …) without re-uploading it."),
 ]
 
 _MIRROR_LEECH_SUBFEATURES: list[tuple[str, str, str]] = [
