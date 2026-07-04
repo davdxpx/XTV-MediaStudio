@@ -89,6 +89,24 @@ async def run_task(task: MLTask, client: Any, progress_cb: Optional[Any] = None)
         task.status = "failed"
         task.error = f"temp dir unavailable: {exc}"
         raise
+
+    # Baseline disk guard: refuse to even start when the volume is nearly
+    # full — a doomed multi-GB download would only make things worse for
+    # every other running task. Size-aware checks happen again inside the
+    # downloaders once Content-Length is known.
+    try:
+        free = shutil.disk_usage(str(_TEMP_ROOT)).free
+        if free < 512 * 1024 * 1024:
+            task.status = "failed"
+            task.error = (
+                f"Server storage almost full ({int(free / 1024 / 1024)} MB free). "
+                "Try again later."
+            )
+            raise RuntimeError(task.error)
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # disk_usage unavailable — proceed and let the download try
     temp_dir = Path(tempfile.mkdtemp(prefix=f"{task.id}-", dir=str(_TEMP_ROOT)))
     ctx = _make_context(task, client, temp_dir)
 
