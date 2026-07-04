@@ -101,9 +101,7 @@ def _format_dt(value) -> str:
     if not value:
         return "__never__"
     if isinstance(value, datetime.datetime):
-        return value.strftime("%d %b %Y · %H:%M UTC")
-    if isinstance(value, str):
-        return f"`{value}`"
+        return f"`{value.strftime('%d %b %Y · %H:%M UTC')}`"
     return f"`{value}`"
 
 
@@ -141,10 +139,12 @@ async def pro_menu(client, callback_query):
 
 
 def _render_active(session: dict, user_bot) -> tuple[str, list]:
-    name = session.get("userbot_first_name") or "__unknown__"
+    # Placeholders live INSIDE `code` spans below, where Telegram renders
+    # markdown literally — so they must be plain words, never __italic__.
+    name = session.get("userbot_first_name") or "unknown"
     if session.get("userbot_username"):
         name = f"{name} (@{session['userbot_username']})"
-    uid = session.get("userbot_user_id") or "__unknown__"
+    uid = session.get("userbot_user_id") or "unknown"
     phone = _mask_phone(session.get("phone_number"))
     is_premium = session.get("is_premium")
     if is_premium is True:
@@ -154,7 +154,9 @@ def _render_active(session: dict, user_bot) -> tuple[str, list]:
     elif is_premium is False:
         prem_line = "💎 Premium: `no`"
     else:
-        prem_line = "💎 Premium: _unknown_"
+        # Pyrogram italic is double-underscore; `_unknown_` renders as
+        # literal underscores.
+        prem_line = "💎 Premium: __unknown__"
     auth_line = f"📅 Authorised: {_format_dt(session.get('authorised_at'))}"
 
     last_check = session.get("last_auth_check_at")
@@ -193,9 +195,9 @@ def _render_active(session: dict, user_bot) -> tuple[str, list]:
         if link:
             tunnel_lines.append(f"• Link: `{link}`")
         else:
-            tunnel_lines.append("• Link: _not set_")
+            tunnel_lines.append("• Link: __not set__")
     else:
-        tunnel_lines.append("_No tunnel configured yet._")
+        tunnel_lines.append("__No tunnel configured yet.__")
 
     upload_count = int(session.get("upload_count_total") or 0)
     upload_bytes = int(session.get("upload_bytes_total") or 0)

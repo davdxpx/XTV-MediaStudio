@@ -20,11 +20,45 @@ from utils.telegram.log import get_logger
 logger = get_logger("mirror_leech.secrets")
 
 
+def _clean_key(raw) -> str:
+    """Normalise a SECRETS_KEY as users actually paste it: platform config
+    UIs and hand-edited .env files love to smuggle in surrounding quotes
+    and whitespace, which make an otherwise valid Fernet key unparseable."""
+    if raw is None:
+        return ""
+    key = str(raw).strip()
+    while len(key) >= 2 and key[0] == key[-1] and key[0] in ("'", '"'):
+        key = key[1:-1].strip()
+    return key
+
+
+def diagnose() -> str:
+    """Classify the encryption readiness for the admin panel:
+
+    ``"ok"``          — encrypt/decrypt will work
+    ``"missing"``     — SECRETS_KEY env var is empty / not set
+    ``"no-crypto"``   — the ``cryptography`` package isn't importable
+    ``"invalid"``     — a key is set but it isn't a valid Fernet key
+    """
+    key = _clean_key(Config.SECRETS_KEY)
+    if not key:
+        return "missing"
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        return "no-crypto"
+    try:
+        Fernet(key.encode())
+    except Exception:
+        return "invalid"
+    return "ok"
+
+
 def _fernet():
     """Return a ready Fernet instance, or None if the key isn't configured
     or the cryptography package isn't importable."""
-    key = Config.SECRETS_KEY
-    if not key or not key.strip():
+    key = _clean_key(Config.SECRETS_KEY)
+    if not key:
         return None
     try:
         from cryptography.fernet import Fernet  # lazy: keeps import cost off hot paths
@@ -32,7 +66,7 @@ def _fernet():
         logger.error("cryptography is not installed — Mirror-Leech credentials cannot be encrypted")
         return None
     try:
-        return Fernet(key.encode() if isinstance(key, str) else key)
+        return Fernet(key.encode())
     except Exception as exc:
         logger.error("Invalid SECRETS_KEY: %s", exc)
         return None
