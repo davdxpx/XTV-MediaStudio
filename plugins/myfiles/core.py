@@ -236,6 +236,7 @@ async def get_myfiles_main_menu(user_id: int):
                 "myfiles_search",
                 "myfiles_activity",
                 "myfiles_smart",
+                "myfiles_insights",
             ],
             user_id,
         )
@@ -257,6 +258,9 @@ async def get_myfiles_main_menu(user_id: int):
         ent_row2.append(InlineKeyboardButton("📊 Activity", callback_data="mf_activity_list"))
     if ent_row2:
         buttons.append(ent_row2)
+
+    if ent.get("myfiles_insights"):
+        buttons.append([InlineKeyboardButton("📈 Insights", callback_data="mf_ins_stats")])
 
     if ent.get("myfiles_smart"):
         buttons.append([InlineKeyboardButton("🧠 Smart Collections", callback_data="mf_smart_list")])

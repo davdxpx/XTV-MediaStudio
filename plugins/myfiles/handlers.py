@@ -985,6 +985,14 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
             for season in sorted(season_counts.keys(), key=lambda x: int(x) if x.isdigit() else 9999):
                 buttons.append([InlineKeyboardButton(f"📁 Season {season} ({season_counts[season]})", callback_data=f"mf_sea_{folder_id}_{season}")])
 
+            # Series completeness report (Insights feature).
+            try:
+                from utils.auth.feature_gate import feature_enabled as _fe
+                if await _fe("myfiles_insights", user_id):
+                    buttons.append([InlineKeyboardButton("🧩 Completeness", callback_data=f"mf_complete_{folder_id}")])
+            except Exception:
+                pass
+
             buttons.append([InlineKeyboardButton("← Back to Category", callback_data=f"myfiles_cat_{folder.get('type', 'custom')}")])
             total = sum(season_counts.values())
             text = f"📁 **{folder['name']}** ({total} files)\n\n📌 = Permanent | ⏳ = Temporary\n\nSelect a season:"
@@ -1050,10 +1058,33 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
 
         text = (
             f"📄 **{name}**\n\n"
-            f"**Status:** `{status.capitalize()}`\n"
+            f"**Status:** `{status.capitalize()}`"
+            f"{' · 📌 Pinned' if f.get('pinned') else ''}\n"
         )
         if media_type:
             text += f"**Type:** `{media_type.capitalize()}`\n"
+        detail_bits = []
+        if f.get("quality"):
+            detail_bits.append(f"`{f['quality']}`")
+        season_v, episode_v = f.get("season"), f.get("episode")
+        if season_v is not None or episode_v is not None:
+            ep_str = ""
+            if isinstance(episode_v, list):
+                ep_str = "".join(f"E{int(e):02d}" for e in episode_v)
+            elif episode_v is not None:
+                ep_str = f"E{int(episode_v):02d}"
+            s_str = f"S{int(str(season_v).lstrip('sS')):02d}" if season_v is not None else ""
+            if s_str or ep_str:
+                detail_bits.append(f"`{s_str}{ep_str}`")
+        if f.get("file_size"):
+            from tools.mirror_leech.UIChrome import format_bytes as _fmt_bytes
+            detail_bits.append(f"`{_fmt_bytes(f['file_size'])}`")
+        if detail_bits:
+            text += f"**Details:** {' · '.join(detail_bits)}\n"
+        if f.get("tags"):
+            text += f"**Tags:** {' '.join('#' + t for t in f['tags'][:6])}\n"
+        if f.get("source_tool"):
+            text += f"**Source:** `{f['source_tool']}`\n"
         if expires and status == "temporary":
             text += f"**Expires:** `{expires.strftime('%Y-%m-%d %H:%M UTC')}`\n"
 
@@ -1096,7 +1127,7 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
         try:
             from utils.auth.feature_gate import feature_many as _fm
             ent = await _fm(
-                ["myfiles_tags", "myfiles_versions"], user_id
+                ["myfiles_tags", "myfiles_versions", "myfiles_tools_bridge"], user_id
             )
         except Exception:
             ent = {}
@@ -1111,6 +1142,13 @@ async def myfiles_callback(client: Client, callback_query: CallbackQuery):
             )
         if extras:
             buttons.append(extras)
+
+        # Tools bridge: pipe this stored file into any tool flow without
+        # re-uploading (re-rename, convert, trim, audio, …).
+        if ent.get("myfiles_tools_bridge"):
+            buttons.append(
+                [InlineKeyboardButton("🛠 Open in Tools", callback_data=f"mf_tools_{file_id}")]
+            )
 
         buttons.append(
             [InlineKeyboardButton("🗑️ Delete File", callback_data=f"myfiles_delfile_{file_id}")]
